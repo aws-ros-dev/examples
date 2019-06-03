@@ -15,65 +15,22 @@
 #include <atomic>
 #include <condition_variable>
 #include <iostream>
+#include <iomanip>
 #include <memory>
 #include <mutex>
 #include <thread>
 
 #include <termios.h>
 
-#include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "rcutils/cmdline_parser.h"
+#include "rclcpp/rclcpp.hpp"
 
 using namespace std::chrono_literals;
 
 //
-// helper functions
+// helper function
 //
-static struct termios old_termios;
-static struct termios new_termios;
-
-/* Initialize new terminal i/o settings */
-void initTermios(int echo) 
-{
-  tcgetattr(0, &old_termios); /* grab old terminal i/o settings */
-  new_termios = old_termios; /* make new settings same as old settings */
-  new_termios.c_lflag &= ~ICANON; /* disable buffered i/o */
-  if (echo) {
-      new_termios.c_lflag |= ECHO; /* set echo mode */
-  } else {
-      new_termios.c_lflag &= ~ECHO; /* set no echo mode */
-  }
-  tcsetattr(0, TCSANOW, &new_termios); /* use these new terminal i/o settings now */
-}
-
-/* Restore old terminal i/o settings */
-void resetTermios(void) 
-{
-  tcsetattr(0, TCSANOW, &old_termios);
-}
-
-/* Read 1 character - echo defines echo mode */
-char getch_(int echo) 
-{
-  char ch;
-  initTermios(echo);
-  ch = getchar();
-  resetTermios();
-  return ch;
-}
-
-/* Read 1 character without echo */
-char getch(void) 
-{
-  return getch_(0);
-}
-
-/* Read 1 character with echo */
-char getche(void) 
-{
-  return getch_(1);
-}
-
 double rmw_time_to_seconds(const rmw_time_t & time)
 {
   double result = time.sec;
@@ -112,16 +69,75 @@ public:
   }
 
 private:
+  /* Initialize new terminal i/o settings */
+  void initTermios(bool echo)
+  {
+    tcgetattr(0, &old_termios); /* grab old terminal i/o settings */
+    new_termios = old_termios; /* make new settings same as old settings */
+    new_termios.c_lflag &= ~ICANON; /* disable buffered i/o */
+    if (echo) {
+      new_termios.c_lflag |= ECHO; /* set echo mode */
+    } else {
+      new_termios.c_lflag &= ~ECHO; /* set no echo mode */
+    }
+    tcsetattr(0, TCSANOW, &new_termios); /* use these new terminal i/o settings now */
+  }
+
+  /* Restore old terminal i/o settings */
+  void resetTermios(void)
+  {
+    tcsetattr(0, TCSANOW, &old_termios);
+  }
+
+  /* Read 1 character - echo defines echo mode */
+  char getch_(bool echo)
+  {
+    char ch;
+    initTermios(echo);
+    ch = getchar();
+    resetTermios();
+    return ch;
+  }
+
+  /* Read 1 character without echo */
+  char getch(void)
+  {
+    return getch_(false);
+  }
+
+  /* Read 1 character with echo */
+  char getche(void)
+  {
+    return getch_(true);
+  }
+
   std::thread thread_;
   std::atomic<bool> run_;
+  termios old_termios;
+  termios new_termios;
 };
 
 class PublisherWithQOS : public rclcpp::Node
 {
 public:
-  PublisherWithQOS() : Node("publisher"), count_(0)
+  PublisherWithQOS(const rclcpp::QoS & qos_profile, const std::chrono::milliseconds & delay)
+  : Node("publisher"), publish_delay_(delay), count_(0)
   {
-    publisher_ = this->create_publisher<std_msgs::msg::String>("topic", 10);
+    rclcpp::PublisherOptions publisher_options;
+    publisher_options.event_callbacks.deadline_callback =
+      [this](rclcpp::QOSDeadlineOfferedInfo & /*event*/) {
+        RCLCPP_INFO(this->get_logger(), "deadline missed");
+      };
+    publisher_options.event_callbacks.liveliness_callback =
+      [this](rclcpp::QOSLivelinessLostInfo & /*event*/) {
+        RCLCPP_INFO(this->get_logger(), "liveliness lost");
+      };
+
+    publisher_ = this->create_publisher<std_msgs::msg::String>(
+      "qos_chatter",
+      qos_profile,
+      publisher_options);
+
     print_qos();
     toggle_send();
   }
@@ -142,7 +158,7 @@ public:
   {
     if (timer_ == nullptr) {
       std::cout << "start sending messages" << std::endl;
-      timer_ = this->create_wall_timer(500ms, [this] { timer_callback(); });
+      timer_ = this->create_wall_timer(publish_delay_, [this] {timer_callback();});
     } else {
       std::cout << "stop sending messages" << std::endl;
       timer_->cancel();
@@ -211,8 +227,8 @@ public:
       default:
         std::cout << "invalid";
     }
-    std::cout << " (lease duration: " << rmw_time_to_seconds(qos.liveliness_lease_duration) << ')'
-              << std::endl;
+    std::cout << " (lease duration: " << rmw_time_to_seconds(qos.liveliness_lease_duration) <<
+      ')' << std::endl;
   }
 
 private:
@@ -226,13 +242,15 @@ private:
 
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
+  std::chrono::milliseconds publish_delay_;
   size_t count_;
 };
 
 class CommandHandler : public CommandPrompt
 {
 public:
-  CommandHandler(PublisherWithQOS * publisher) : publisher_(publisher) {}
+  CommandHandler(PublisherWithQOS * publisher)
+  : publisher_(publisher) {}
 
   virtual void handle_cmd(const char cmd) const override
   {
@@ -256,11 +274,83 @@ private:
   PublisherWithQOS * publisher_;
 };
 
+static constexpr char OPTION_HELP[] = "--help";
+static constexpr char OPTION_PUBLISH_DELAY[] = "--delay";
+static constexpr char OPTION_DEADLINE_PERIOD[] = "--deadline";
+static constexpr char OPTION_LIVELINESS_KIND[] = "--liveliness";
+static constexpr char OPTION_LEASE_DURATION[] = "--lease";
+
+void print_usage(const char * progname)
+{
+  std::cout << progname << " [OPTIONS]" << std::endl <<
+    std::endl << "When starting the program:" << std::endl <<
+    std::left << std::setw(14) << std::setfill(' ') << OPTION_HELP <<
+    "print this help message" << std::endl <<
+    std::left << std::setw(14) << std::setfill(' ') << OPTION_PUBLISH_DELAY <<
+    "the amount of delay between publishing subsequent messages" << std::endl <<
+    std::left << std::setw(14) << std::setfill(' ') << OPTION_DEADLINE_PERIOD <<
+    "deadline period in seconds" << std::endl <<
+    std::left << std::setw(14) << std::setfill(' ') << OPTION_LIVELINESS_KIND <<
+    "liveliness kind" << std::endl <<
+    std::left << std::setw(14) << std::setfill(' ') << OPTION_LEASE_DURATION <<
+    "lease duration for liveliness in seconds" << std::endl <<
+    std::endl <<
+
+    "When the program is executing:" << std::endl <<
+    std::left << std::setw(14) << std::setfill(' ') << 'n' <<
+    "manually assert the liveliness of the node" << std::endl <<
+    std::left << std::setw(14) << std::setfill(' ') << 'p' <<
+    "manually assert the liveliness of the publisher" << std::endl <<
+    std::left << std::setw(14) << std::setfill(' ') << 's' <<
+    "toggle start/stop of publishing messages" << std::endl <<
+    std::left << std::setw(14) << std::setfill(' ') << 'q' <<
+    "print the QoS settings of the publisher" << std::endl <<
+    std::endl;
+}
+
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
 
-  auto node = std::make_shared<PublisherWithQOS>();
+  // Required arguments
+  rclcpp::QoS qos_settings(10);
+  std::chrono::milliseconds publish_delay = 500ms;
+
+  // Optional argument parsing
+  if (rcutils_cli_option_exist(argv, argv + argc, OPTION_HELP)) {
+    print_usage(argv[0]);
+    return 0;
+  }
+  if (rcutils_cli_option_exist(argv, argv + argc, OPTION_PUBLISH_DELAY)) {
+    publish_delay = std::chrono::milliseconds(static_cast<int>(1000 *
+        std::stof(rcutils_cli_get_option(argv, argv + argc, OPTION_PUBLISH_DELAY))));
+  }
+  if (rcutils_cli_option_exist(argv, argv + argc, OPTION_DEADLINE_PERIOD)) {
+    auto period = std::chrono::milliseconds(static_cast<int>(1000 *
+        std::stof(rcutils_cli_get_option(argv, argv + argc, OPTION_DEADLINE_PERIOD))));
+    qos_settings.deadline(period);
+  }
+  if (rcutils_cli_option_exist(argv, argv + argc, OPTION_LIVELINESS_KIND)) {
+    std::string kind = rcutils_cli_get_option(argv, argv + argc, OPTION_LIVELINESS_KIND);
+    if (kind == "AUTOMATIC") {
+      qos_settings.liveliness(RMW_QOS_POLICY_LIVELINESS_AUTOMATIC);
+    } else if (kind == "MANUAL_BY_NODE") {
+      qos_settings.liveliness(RMW_QOS_POLICY_LIVELINESS_MANUAL_BY_NODE);
+    } else if (kind == "MANUAL_BY_TOPIC") {
+      qos_settings.liveliness(RMW_QOS_POLICY_LIVELINESS_MANUAL_BY_TOPIC);
+    } else {
+      std::cout << "error: invalid liveliness kind specified" << std::endl <<
+        "must be one of: AUTOMATIC, MANUAL_BY_NODE, MANUAL_BY_TOPIC" << std::endl;
+      return -1;
+    }
+  }
+  if (rcutils_cli_option_exist(argv, argv + argc, OPTION_LEASE_DURATION)) {
+    auto duration = std::chrono::milliseconds(static_cast<int>(1000 *
+        std::stof(rcutils_cli_get_option(argv, argv + argc, OPTION_LEASE_DURATION))));
+    qos_settings.liveliness_lease_duration(duration);
+  }
+
+  auto node = std::make_shared<PublisherWithQOS>(qos_settings, publish_delay);
   CommandHandler cmd_handler(node.get());
 
   cmd_handler.start();
@@ -268,5 +358,6 @@ int main(int argc, char * argv[])
   cmd_handler.stop();
 
   rclcpp::shutdown();
+
   return 0;
 }

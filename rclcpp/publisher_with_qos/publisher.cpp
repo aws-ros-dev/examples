@@ -117,6 +117,69 @@ private:
   termios new_termios;
 };
 
+void print_qos(const rmw_qos_profile_t & qos)
+{
+  std::cout << "HISTORY POLICY: ";
+  switch (qos.history) {
+    case RMW_QOS_POLICY_HISTORY_KEEP_LAST:
+      std::cout << "keep last";
+      break;
+    case RMW_QOS_POLICY_HISTORY_KEEP_ALL:
+      std::cout << "keep all";
+      break;
+    default:
+      std::cout << "invalid";
+  }
+  std::cout << " (depth: " << qos.depth << ')' << std::endl;
+
+  std::cout << "RELIABILITY POLICY: ";
+  switch (qos.reliability) {
+    case RMW_QOS_POLICY_RELIABILITY_RELIABLE:
+      std::cout << "reliable";
+      break;
+    case RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT:
+      std::cout << "best effort";
+      break;
+    default:
+      std::cout << "invalid";
+  }
+  std::cout << std::endl;
+
+  std::cout << "DURABILITY POLICY: ";
+  switch (qos.durability) {
+    case RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL:
+      std::cout << "transient local";
+      break;
+    case RMW_QOS_POLICY_DURABILITY_VOLATILE:
+      std::cout << "volatile";
+      break;
+    default:
+      std::cout << "invalid";
+  }
+  std::cout << std::endl;
+
+  std::cout << "DEADLINE: " << rmw_time_to_seconds(qos.deadline) << std::endl;
+
+  std::cout << "LIFESPAN: " << rmw_time_to_seconds(qos.lifespan) << std::endl;
+
+  std::cout << "LIVELINESS POLICY: ";
+  switch (qos.liveliness) {
+    case RMW_QOS_POLICY_LIVELINESS_AUTOMATIC:
+      std::cout << "automatic";
+      break;
+    case RMW_QOS_POLICY_LIVELINESS_MANUAL_BY_NODE:
+      std::cout << "manual by node";
+      break;
+    case RMW_QOS_POLICY_LIVELINESS_MANUAL_BY_TOPIC:
+      std::cout << "manual by topic";
+      break;
+    default:
+      std::cout << "invalid";
+  }
+  std::cout << " (lease duration: " << rmw_time_to_seconds(qos.liveliness_lease_duration) <<
+    ')' << std::endl;
+}
+
 class PublisherWithQOS : public rclcpp::Node
 {
 public:
@@ -168,67 +231,7 @@ public:
 
   void print_qos() const
   {
-    rmw_qos_profile_t qos = publisher_->get_actual_qos();
-
-    std::cout << "HISTORY POLICY: ";
-    switch (qos.history) {
-      case RMW_QOS_POLICY_HISTORY_KEEP_LAST:
-        std::cout << "keep last";
-        break;
-      case RMW_QOS_POLICY_HISTORY_KEEP_ALL:
-        std::cout << "keep all";
-        break;
-      default:
-        std::cout << "invalid";
-    }
-    std::cout << " (depth: " << qos.depth << ')' << std::endl;
-
-    std::cout << "RELIABILITY POLICY: ";
-    switch (qos.reliability) {
-      case RMW_QOS_POLICY_RELIABILITY_RELIABLE:
-        std::cout << "reliable";
-        break;
-      case RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT:
-        std::cout << "best effort";
-        break;
-      default:
-        std::cout << "invalid";
-    }
-    std::cout << std::endl;
-
-    std::cout << "DURABILITY POLICY: ";
-    switch (qos.durability) {
-      case RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL:
-        std::cout << "transient local";
-        break;
-      case RMW_QOS_POLICY_DURABILITY_VOLATILE:
-        std::cout << "volatile";
-        break;
-      default:
-        std::cout << "invalid";
-    }
-    std::cout << std::endl;
-
-    std::cout << "DEADLINE: " << rmw_time_to_seconds(qos.deadline) << std::endl;
-
-    std::cout << "LIFESPAN: " << rmw_time_to_seconds(qos.lifespan) << std::endl;
-
-    std::cout << "LIVELINESS POLICY: ";
-    switch (qos.liveliness) {
-      case RMW_QOS_POLICY_LIVELINESS_AUTOMATIC:
-        std::cout << "automatic";
-        break;
-      case RMW_QOS_POLICY_LIVELINESS_MANUAL_BY_NODE:
-        std::cout << "manual by node";
-        break;
-      case RMW_QOS_POLICY_LIVELINESS_MANUAL_BY_TOPIC:
-        std::cout << "manual by topic";
-        break;
-      default:
-        std::cout << "invalid";
-    }
-    std::cout << " (lease duration: " << rmw_time_to_seconds(qos.liveliness_lease_duration) <<
-      ')' << std::endl;
+    ::print_qos(publisher_->get_actual_qos());
   }
 
 private:

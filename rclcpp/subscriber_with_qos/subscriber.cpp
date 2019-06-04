@@ -160,7 +160,7 @@ void print_qos(const rmw_qos_profile_t & qos)
 
   std::cout << "DEADLINE: " << rmw_time_to_seconds(qos.deadline) << std::endl;
 
-  std::cout << "LIFESPAN: " << rmw_time_to_seconds(qos.lifespan) << std::endl;
+  // std::cout << "LIFESPAN: " << rmw_time_to_seconds(qos.lifespan) << std::endl;
 
   std::cout << "LIVELINESS POLICY: ";
   switch (qos.liveliness) {
@@ -188,12 +188,15 @@ public:
   {
     rclcpp::SubscriptionOptions subscription_options;
     subscription_options.event_callbacks.deadline_callback =
-      [this](rclcpp::QOSDeadlineRequestedInfo & /*event*/) {
-        RCLCPP_INFO(this->get_logger(), "deadline missed");
+      [this](rclcpp::QOSDeadlineRequestedInfo & event) {
+        RCLCPP_INFO(this->get_logger(), "Deadline missed - total %d (delta %d)",
+          event.total_count, event.total_count_change);
       };
     subscription_options.event_callbacks.liveliness_callback =
-      [this](rclcpp::QOSLivelinessChangedInfo & /*event*/) {
-        RCLCPP_INFO(this->get_logger(), "liveliness lost");
+      [this](rclcpp::QOSLivelinessChangedInfo & event) {
+        RCLCPP_INFO(this->get_logger(), "Liveliness changed - alive %d (delta %d),"
+          " not alive %d (delta %d)", event.alive_count, event.alive_count_change,
+          event.not_alive_count, event.not_alive_count_change);
       };
 
     subscription_ = this->create_subscription<std_msgs::msg::String>(
@@ -217,6 +220,24 @@ private:
   }
 
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr subscription_;
+};
+
+class CommandHandler : public CommandPrompt
+{
+public:
+  CommandHandler(SubscriberWithQOS * subscriber)
+  : subscriber_(subscriber) {}
+
+  virtual void handle_cmd(const char cmd) const override
+  {
+    if (cmd == 'q') {
+      // print the qos settings
+      subscriber_->print_qos();
+    }
+  }
+
+private:
+  SubscriberWithQOS * subscriber_;
 };
 
 static constexpr char OPTION_HELP[] = "--help";
@@ -291,7 +312,11 @@ int main(int argc, char * argv[])
   }
 
   auto node = std::make_shared<SubscriberWithQOS>(qos_settings);
+  CommandHandler cmd_handler(node.get());
+
+  cmd_handler.start();
   rclcpp::spin(node);
+  cmd_handler.stop();
 
   rclcpp::shutdown();
 

@@ -188,12 +188,14 @@ public:
   {
     rclcpp::PublisherOptions publisher_options;
     publisher_options.event_callbacks.deadline_callback =
-      [this](rclcpp::QOSDeadlineOfferedInfo & /*event*/) {
-        RCLCPP_INFO(this->get_logger(), "deadline missed");
+      [this](rclcpp::QOSDeadlineOfferedInfo & event) {
+        RCLCPP_INFO(this->get_logger(), "Deadline missed - total %d (delta %d)",
+          event.total_count, event.total_count_change);
       };
     publisher_options.event_callbacks.liveliness_callback =
-      [this](rclcpp::QOSLivelinessLostInfo & /*event*/) {
-        RCLCPP_INFO(this->get_logger(), "liveliness lost");
+      [this](rclcpp::QOSLivelinessLostInfo & event) {
+        RCLCPP_INFO(this->get_logger(), "Liveliness lost - total %d (delta %d)",
+          event.total_count, event.total_count_change);
       };
 
     publisher_ = this->create_publisher<std_msgs::msg::String>(

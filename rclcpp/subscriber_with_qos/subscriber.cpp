@@ -263,12 +263,6 @@ void print_usage(const char * progname)
     std::endl <<
 
     "When the program is executing:" << std::endl <<
-    std::left << std::setw(14) << std::setfill(' ') << 'n' <<
-    "manually assert the liveliness of the node" << std::endl <<
-    std::left << std::setw(14) << std::setfill(' ') << 'p' <<
-    "manually assert the liveliness of the publisher" << std::endl <<
-    std::left << std::setw(14) << std::setfill(' ') << 's' <<
-    "toggle start/stop of publishing messages" << std::endl <<
     std::left << std::setw(14) << std::setfill(' ') << 'q' <<
     "print the QoS settings of the publisher" << std::endl <<
     std::endl;

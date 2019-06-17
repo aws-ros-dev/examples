@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <atomic>
+#include <cctype>
 #include <condition_variable>
 #include <iostream>
 #include <iomanip>
@@ -20,7 +21,11 @@
 #include <mutex>
 #include <thread>
 
+#ifdef _WIN32
+#include <conio.h>
+#else
 #include <termios.h>
+#endif
 
 #include "std_msgs/msg/string.hpp"
 #include "rcutils/cmdline_parser.h"
@@ -38,7 +43,7 @@ double rmw_time_to_seconds(const rmw_time_t & time)
   return result;
 }
 
-class CommandPrompt
+class CommandGetter
 {
 public:
   bool is_active() const
@@ -69,52 +74,29 @@ public:
   }
 
 private:
-  /* Initialize new terminal i/o settings */
-  void initTermios(bool echo)
+  /* Read 1 character */
+  char getch()
   {
-    tcgetattr(0, &old_termios); /* grab old terminal i/o settings */
-    new_termios = old_termios; /* make new settings same as old settings */
-    new_termios.c_lflag &= ~ICANON; /* disable buffered i/o */
-    if (echo) {
-      new_termios.c_lflag |= ECHO; /* set echo mode */
-    } else {
-      new_termios.c_lflag &= ~ECHO; /* set no echo mode */
-    }
-    tcsetattr(0, TCSANOW, &new_termios); /* use these new terminal i/o settings now */
-  }
+#ifdef _WIN32
+    char ch = _getch();
+#else
+    termios old_termios;
+    tcgetattr(0, &old_termios);           /* grab old terminal i/o settings */
 
-  /* Restore old terminal i/o settings */
-  void resetTermios(void)
-  {
-    tcsetattr(0, TCSANOW, &old_termios);
-  }
+    termios new_termios = old_termios;    /* make new settings same as old settings */
+    new_termios.c_lflag &= ~ICANON;       /* disable buffered i/o */
+    new_termios.c_lflag &= ~ECHO;         /* set no echo mode */
+    tcsetattr(0, TCSANOW, &new_termios);  /* use these new terminal i/o settings now */
 
-  /* Read 1 character - echo defines echo mode */
-  char getch_(bool echo)
-  {
-    char ch;
-    initTermios(echo);
-    ch = getchar();
-    resetTermios();
+    char ch = getchar();
+
+    tcsetattr(0, TCSANOW, &old_termios);  /* restore old terminal i/o settings */
+#endif
     return ch;
-  }
-
-  /* Read 1 character without echo */
-  char getch(void)
-  {
-    return getch_(false);
-  }
-
-  /* Read 1 character with echo */
-  char getche(void)
-  {
-    return getch_(true);
   }
 
   std::thread thread_;
   std::atomic<bool> run_;
-  termios old_termios;
-  termios new_termios;
 };
 
 void print_qos(const rmw_qos_profile_t & qos)
@@ -251,15 +233,22 @@ private:
   size_t count_;
 };
 
-class CommandHandler : public CommandPrompt
+static rclcpp::executors::SingleThreadedExecutor & get_executor()
+{
+  static rclcpp::executors::SingleThreadedExecutor exec;
+  return exec;
+}
+
+class CommandHandler : public CommandGetter
 {
 public:
   CommandHandler(PublisherWithQOS * publisher)
   : publisher_(publisher) {}
 
-  virtual void handle_cmd(const char cmd) const override
+  virtual void handle_cmd(const char command) const override
   {
-    // std::cout << "handle_cmd " << cmd << std::endl;
+    const char cmd = tolower(command);
+
     if (cmd == 'n') {
       // manually assert liveliness of node
       publisher_->assert_node_liveliness();
@@ -272,6 +261,9 @@ public:
     } else if (cmd == 'q') {
       // print the qos settings
       publisher_->print_qos();
+    } else if (cmd == 'x') {
+      // signal program exit
+      get_executor().cancel();
     }
   }
 
@@ -359,7 +351,9 @@ int main(int argc, char * argv[])
   CommandHandler cmd_handler(node.get());
 
   cmd_handler.start();
-  rclcpp::spin(node);
+  get_executor().add_node(node);
+  get_executor().spin();
+  get_executor().remove_node(node);
   cmd_handler.stop();
 
   rclcpp::shutdown();
